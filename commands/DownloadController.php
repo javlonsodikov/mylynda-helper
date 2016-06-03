@@ -13,12 +13,13 @@ use yii\console\Controller;
 class DownloadController extends Controller
 {
     private $uagent = "Mozilla/5.0 (Windows NT 10.0; WOW64; rv:46.0) Gecko/20100101 Firefox/46.0";
+    private $tryagain = 0;
 
     public function actionIndex($url, $login, $pass)
     {
         //echo $this->login($login, $pass);
         $content = $this->getContent($url);
-        file_put_contents(__DIR__ . "/test.html", $content);
+        //file_put_contents(__DIR__ . "/test.html", $content);
         $data = $this->extractData($content, "/\<a href=\"(.*)\" class=\"item-name video-name ga\"/i");
         //print_r($data);
         $path = parse_url($url, PHP_URL_PATH);
@@ -57,17 +58,38 @@ class DownloadController extends Controller
                     $remoteFileSize = $this->retrieveRemoteFileSize($remote_file);
                     $localFileSize = filesize($path . $filename);
                     echo "Remote x Local : " . $remoteFileSize . " x " . $localFileSize;
-                    if ($remoteFileSize != $localFileSize) {
+                    if ($remoteFileSize > $localFileSize) {
                         echo " Resuming ..." . PHP_EOL;
-                        if (!$this->saveContent($remote_file, $path . $filename, $localFileSize)) {
-
+                        for ($ii = 0; $ii < 3; $ii++) {
+                            if (!$this->saveContent($remote_file, $path . $filename, $localFileSize)) {
+                                file_put_contents(__DIR__ . "/error.txt", $path . $filename . "\r\n$remote_file\r\n\r\n", FILE_APPEND);
+                                echo " Error trying again ..." . PHP_EOL;
+                                continue;
+                            }
+                            break;
                         }
-                    } else {
+                    } elseif ($remoteFileSize < $localFileSize) {
+                        echo "Broken re Downloading: " . $path . $filename . PHP_EOL;
+                        for ($ii = 0; $ii < 3; $ii++) {
+                            if (!$this->saveContent($remote_file, $path . $filename)) {
+                                file_put_contents(__DIR__ . "/error.txt", $path . $filename . "\r\n$remote_file\r\n\r\n", FILE_APPEND);
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                    else {
                         echo " Ok!" . PHP_EOL;
                     }
                 } else {
                     echo "Downloading: " . $path . $filename . PHP_EOL;
-                    $this->saveContent($remote_file, $path . $filename);
+                    for ($ii = 0; $ii < 3; $ii++) {
+                        if (!$this->saveContent($remote_file, $path . $filename)) {
+                            file_put_contents(__DIR__ . "/error.txt", $path . $filename . "\r\n$remote_file\r\n\r\n", FILE_APPEND);
+                            continue;
+                        }
+                        break;
+                    }
                 }
                 echo PHP_EOL;
             }
@@ -141,8 +163,7 @@ class DownloadController extends Controller
         return $size;
     }
 
-    private
-    function saveContent($url, $file, $from = 0)
+    private function saveContent($url, $file, $from = 0)
     {
 
 
@@ -154,7 +175,7 @@ class DownloadController extends Controller
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 60000);
         curl_setopt($ch, CURLOPT_COOKIESESSION, true);
         if ($from > 0) {
             curl_setopt($ch, CURLOPT_RANGE, $from . "-");
@@ -173,6 +194,7 @@ class DownloadController extends Controller
         $content = curl_exec($ch);
         if (curl_errno($ch)) {
             echo curl_error($ch);
+            $this->tryagain++;
             return false;
         }
         curl_close($ch);
